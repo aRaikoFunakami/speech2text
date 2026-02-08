@@ -28,7 +28,21 @@ uv tool install git+https://github.com/aRaikoFunakami/speech2text.git@v1.0.0
 ```bash
 git clone https://github.com/aRaikoFunakami/speech2text.git
 cd speech2text
-uv sync
+make setup
+```
+
+`make setup` は OS を自動判別し、以下を実行します：
+
+- **macOS**: Homebrew で ffmpeg / uv をインストール
+- **Linux**: apt-get / dnf / pacman で ffmpeg をインストール、uv を公式スクリプトでインストール
+- 共通: `uv sync` で Python 依存パッケージをインストール
+
+個別に実行する場合：
+
+```bash
+make setup-mac    # macOS のみ
+make setup-linux  # Linux のみ
+make help         # 利用可能なコマンド一覧
 ```
 
 ## セットアップ
@@ -87,10 +101,16 @@ ffmpeg が対応するすべての音声/動画形式を入力可能。以下の
 
 ```bash
 # テスト実行
-uv run pytest
+make test
 
 # ローカルで直接実行
+make run ARGS="input.mp4 -l ja"
+
+# または uv 直接実行
 uv run speech2text --help
+
+# ビルド成果物の削除
+make clean
 ```
 
 ## ライセンス
