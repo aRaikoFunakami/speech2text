@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from speech2text.converter import SUPPORTED_FORMATS, _needs_conversion, convert_to_mp3
+from speech2text.converter import (
+    MAX_FILE_SIZE,
+    SUPPORTED_FORMATS,
+    _needs_conversion,
+    convert_to_mp3,
+    split_audio,
+)
 
 
 class TestNeedsConversion:
@@ -88,3 +94,71 @@ class TestConvertToMp3:
 
         with pytest.raises(RuntimeError, match="ffmpeg conversion failed"):
             convert_to_mp3(avi_file)
+
+
+class TestSplitAudio:
+    """Test split_audio function."""
+
+    def test_small_file_returns_original(self, tmp_path: Path) -> None:
+        """Files under MAX_FILE_SIZE should not be split."""
+        small_file = tmp_path / "small.mp3"
+        small_file.write_bytes(b"\x00" * 1000)
+        result = split_audio(small_file)
+        assert result == [small_file]
+
+    @patch("speech2text.converter.subprocess.run")
+    @patch("speech2text.converter.shutil.which", return_value="/usr/bin/ffmpeg")
+    def test_large_file_splits(self, _mock_which: object, mock_run: object, tmp_path: Path) -> None:
+        """Files over MAX_FILE_SIZE should be split into chunks."""
+        large_file = tmp_path / "large.mp3"
+        large_file.write_bytes(b"\x00" * (MAX_FILE_SIZE + 1))
+
+        # Mock ffprobe for duration
+        ffprobe_result = MagicMock()
+        ffprobe_result.returncode = 0
+        ffprobe_result.stdout = '{"format": {"duration": "120.0"}}'
+
+        # Mock ffmpeg split - create dummy chunk files
+        def ffmpeg_side_effect(cmd, **kwargs):
+            if "ffprobe" in str(cmd[0]):
+                return ffprobe_result
+            # ffmpeg segment call - create chunk files
+            for arg in cmd:
+                if "chunk_" in str(arg):
+                    chunk_dir = Path(arg).parent
+                    (chunk_dir / "chunk_000.mp3").write_bytes(b"chunk0")
+                    (chunk_dir / "chunk_001.mp3").write_bytes(b"chunk1")
+                    break
+            result = MagicMock()
+            result.returncode = 0
+            return result
+
+        mock_run.side_effect = ffmpeg_side_effect
+
+        # Also mock ffprobe which lookup
+        with patch("speech2text.converter.shutil.which", side_effect=lambda x: f"/usr/bin/{x}"):
+            chunks = split_audio(large_file)
+
+        assert len(chunks) == 2
+        assert all(c.suffix == ".mp3" for c in chunks)
+
+    @patch("speech2text.converter.subprocess.run")
+    @patch("speech2text.converter.shutil.which", return_value="/usr/bin/ffmpeg")
+    def test_split_ffmpeg_failure(self, _mock_which: object, mock_run: object, tmp_path: Path) -> None:
+        """Should raise RuntimeError on ffmpeg failure."""
+        large_file = tmp_path / "large.mp3"
+        large_file.write_bytes(b"\x00" * (MAX_FILE_SIZE + 1))
+
+        ffprobe_result = MagicMock()
+        ffprobe_result.returncode = 0
+        ffprobe_result.stdout = '{"format": {"duration": "120.0"}}'
+
+        ffmpeg_result = MagicMock()
+        ffmpeg_result.returncode = 1
+        ffmpeg_result.stderr = "split error"
+
+        mock_run.side_effect = [ffprobe_result, ffmpeg_result]
+
+        with patch("speech2text.converter.shutil.which", side_effect=lambda x: f"/usr/bin/{x}"):
+            with pytest.raises(RuntimeError, match="ffmpeg split failed"):
+                split_audio(large_file)

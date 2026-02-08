@@ -6,9 +6,6 @@ import os
 import sys
 from pathlib import Path
 
-MAX_FILE_SIZE = 25 * 1024 * 1024  # 25 MB
-
-
 def transcribe(
     audio_path: Path,
     model: str = "whisper-1",
@@ -28,18 +25,10 @@ def transcribe(
 
     Raises:
         FileNotFoundError: If audio file does not exist.
-        ValueError: If file exceeds 25 MB size limit.
         RuntimeError: If OPENAI_API_KEY is not set.
     """
     if not audio_path.exists():
         raise FileNotFoundError(f"Audio file not found: {audio_path}")
-
-    file_size = audio_path.stat().st_size
-    if file_size > MAX_FILE_SIZE:
-        raise ValueError(
-            f"File size ({file_size / 1024 / 1024:.1f} MB) exceeds the 25 MB limit. "
-            "Please provide a shorter audio file."
-        )
 
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:

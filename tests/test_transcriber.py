@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from speech2text.transcriber import MAX_FILE_SIZE, transcribe
+from speech2text.transcriber import transcribe
 
 
 class TestTranscribe:
@@ -16,13 +16,6 @@ class TestTranscribe:
     def test_file_not_found(self, tmp_path: Path) -> None:
         with pytest.raises(FileNotFoundError, match="Audio file not found"):
             transcribe(tmp_path / "nonexistent.mp3")
-
-    def test_file_too_large(self, tmp_path: Path) -> None:
-        large_file = tmp_path / "large.mp3"
-        # Create a file just over 25 MB
-        large_file.write_bytes(b"\x00" * (MAX_FILE_SIZE + 1))
-        with pytest.raises(ValueError, match="exceeds the 25 MB limit"):
-            transcribe(large_file)
 
     def test_missing_api_key(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         audio_file = tmp_path / "test.mp3"

@@ -55,19 +55,42 @@ def main(argv: list[str] | None = None) -> None:
         print(f"Error: Input file not found: {args.input_file}", file=sys.stderr)
         sys.exit(1)
 
-    from speech2text.converter import convert_to_mp3
+    import shutil
+
+    from speech2text.converter import convert_to_mp3, split_audio
     from speech2text.transcriber import transcribe
 
     # Convert to mp3
     mp3_path = convert_to_mp3(args.input_file)
+    chunks: list[Path] = []
+    tmp_dir: Path | None = None
     try:
-        # Transcribe
-        result = transcribe(
-            audio_path=mp3_path,
-            model=args.model,
-            language=args.language,
-            response_format=args.response_format,
-        )
+        # Split if needed
+        chunks = split_audio(mp3_path)
+        if len(chunks) > 1:
+            tmp_dir = chunks[0].parent
+            print(
+                f"Audio split into {len(chunks)} chunks for processing...",
+                file=sys.stderr,
+            )
+
+        # Transcribe each chunk
+        results: list[str] = []
+        for i, chunk in enumerate(chunks, 1):
+            if len(chunks) > 1:
+                print(
+                    f"  Transcribing chunk {i}/{len(chunks)}...",
+                    file=sys.stderr,
+                )
+            text = transcribe(
+                audio_path=chunk,
+                model=args.model,
+                language=args.language,
+                response_format=args.response_format,
+            )
+            results.append(text)
+
+        result = "\n".join(results)
 
         # Output
         if args.output:
@@ -75,9 +98,11 @@ def main(argv: list[str] | None = None) -> None:
         else:
             print(result)
     finally:
-        # Clean up temp file (only if we created one)
+        # Clean up temp files
         if mp3_path != args.input_file:
             mp3_path.unlink(missing_ok=True)
+        if tmp_dir and tmp_dir.exists():
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":
