@@ -34,10 +34,53 @@ def _needs_conversion(input_path: Path) -> bool:
     return input_path.suffix.lower() not in SUPPORTED_FORMATS
 
 
+def _has_video_stream(input_path: Path) -> bool:
+    """Check if a file contains a video stream using ffprobe.
+
+    Returns True if the file has at least one video stream (excluding
+    attached images like album art).
+    """
+    ffprobe = shutil.which("ffprobe")
+    if ffprobe is None:
+        # If ffprobe is unavailable, assume no video to avoid blocking
+        return False
+
+    cmd = [
+        ffprobe,
+        "-v", "quiet",
+        "-print_format", "json",
+        "-show_streams",
+        "-select_streams", "v",  # video streams only
+        str(input_path),
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+
+    if result.returncode != 0:
+        return False
+
+    try:
+        info = json.loads(result.stdout)
+        streams = info.get("streams", [])
+        # Filter out attached pictures (e.g. album art in mp3/m4a)
+        return any(
+            s.get("codec_type") == "video"
+            and s.get("disposition", {}).get("attached_pic", 0) != 1
+            for s in streams
+        )
+    except (json.JSONDecodeError, KeyError):
+        return False
+
+
 def convert_to_mp3(input_path: Path, output_path: Path | None = None) -> Path:
     """Convert an audio/video file to mp3 using ffmpeg.
 
-    If the file is already in a supported format, return the original path.
+    If the file is already in a supported audio format and has no video
+    stream, return the original path.  Files with a video stream (e.g.
+    .webm, .mp4 video) are always converted to audio-only mp3 to reduce
+    file size before sending to the API.
 
     Args:
         input_path: Path to the input audio/video file.
@@ -53,7 +96,8 @@ def convert_to_mp3(input_path: Path, output_path: Path | None = None) -> Path:
     if not input_path.exists():
         raise FileNotFoundError(f"Input file not found: {input_path}")
 
-    if not _needs_conversion(input_path):
+    # Skip conversion only if format is supported AND file has no video stream
+    if not _needs_conversion(input_path) and not _has_video_stream(input_path):
         return input_path
 
     ffmpeg = _check_ffmpeg()

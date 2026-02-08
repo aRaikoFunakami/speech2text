@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -10,6 +11,7 @@ import pytest
 from speech2text.converter import (
     MAX_FILE_SIZE,
     SUPPORTED_FORMATS,
+    _has_video_stream,
     _needs_conversion,
     convert_to_mp3,
     split_audio,
@@ -94,6 +96,73 @@ class TestConvertToMp3:
 
         with pytest.raises(RuntimeError, match="ffmpeg conversion failed"):
             convert_to_mp3(avi_file)
+
+    @patch("speech2text.converter._has_video_stream", return_value=True)
+    @patch("speech2text.converter.subprocess.run")
+    @patch("speech2text.converter.shutil.which", return_value="/usr/bin/ffmpeg")
+    def test_webm_with_video_forces_conversion(
+        self, _mock_which: object, mock_run: object, _mock_has_video: object, tmp_path: Path
+    ) -> None:
+        """A .webm file with a video stream should be converted to mp3."""
+        webm_file = tmp_path / "video.webm"
+        webm_file.write_bytes(b"fake webm data")
+
+        mock_run.return_value.returncode = 0  # type: ignore[attr-defined]
+
+        result = convert_to_mp3(webm_file)
+
+        mock_run.assert_called_once()  # type: ignore[attr-defined]
+        call_args = mock_run.call_args[0][0]  # type: ignore[attr-defined]
+        assert "-vn" in call_args
+        assert result.suffix == ".mp3"
+
+
+class TestHasVideoStream:
+    """Test _has_video_stream helper."""
+
+    @patch("speech2text.converter.shutil.which", return_value=None)
+    def test_no_ffprobe_returns_false(self, _mock_which: object, tmp_path: Path) -> None:
+        f = tmp_path / "test.webm"
+        f.write_bytes(b"data")
+        assert _has_video_stream(f) is False
+
+    @patch("speech2text.converter.subprocess.run")
+    @patch("speech2text.converter.shutil.which", return_value="/usr/bin/ffprobe")
+    def test_video_stream_detected(
+        self, _mock_which: object, mock_run: object, tmp_path: Path
+    ) -> None:
+        f = tmp_path / "test.webm"
+        f.write_bytes(b"data")
+        mock_run.return_value.returncode = 0  # type: ignore[attr-defined]
+        mock_run.return_value.stdout = json.dumps({  # type: ignore[attr-defined]
+            "streams": [{"codec_type": "video", "disposition": {"attached_pic": 0}}]
+        })
+        assert _has_video_stream(f) is True
+
+    @patch("speech2text.converter.subprocess.run")
+    @patch("speech2text.converter.shutil.which", return_value="/usr/bin/ffprobe")
+    def test_attached_pic_not_counted(
+        self, _mock_which: object, mock_run: object, tmp_path: Path
+    ) -> None:
+        """Album art (attached_pic) should not count as a video stream."""
+        f = tmp_path / "test.mp3"
+        f.write_bytes(b"data")
+        mock_run.return_value.returncode = 0  # type: ignore[attr-defined]
+        mock_run.return_value.stdout = json.dumps({  # type: ignore[attr-defined]
+            "streams": [{"codec_type": "video", "disposition": {"attached_pic": 1}}]
+        })
+        assert _has_video_stream(f) is False
+
+    @patch("speech2text.converter.subprocess.run")
+    @patch("speech2text.converter.shutil.which", return_value="/usr/bin/ffprobe")
+    def test_no_video_streams(
+        self, _mock_which: object, mock_run: object, tmp_path: Path
+    ) -> None:
+        f = tmp_path / "test.wav"
+        f.write_bytes(b"data")
+        mock_run.return_value.returncode = 0  # type: ignore[attr-defined]
+        mock_run.return_value.stdout = json.dumps({"streams": []})  # type: ignore[attr-defined]
+        assert _has_video_stream(f) is False
 
 
 class TestSplitAudio:
